@@ -43,6 +43,8 @@ const varieties = [
   "Other"
 ];
 
+const dayOptions = Array.from({length:22},(_,index)=>index);
+
 const clamp = (value:number,min:number,max:number) =>
   Math.min(max, Math.max(min,value));
 
@@ -382,7 +384,7 @@ export default function Page(){
           Prediction_ID:`PRED-${Date.now()}`,
           Sample_ID:sampleId,
           Prediction_Timestamp:new Date().toISOString(),
-          Model_Version:"v2.0-composite",
+          Model_Version:"v2.2-composite",
           NOAA_Station_ID:station?.id||"",
           NOAA_Station_Name:station?.name||"",
           NOAA_Station_Distance_km:station?.distanceKm||"",
@@ -494,7 +496,7 @@ export default function Page(){
           assessment, and collaborative model validation.
         </p>
       </div>
-      <span className="badge">VERSION 2.0 • RESEARCH RELEASE</span>
+      <span className="badge">VERSION 2.2 • MOBILE INPUT FIX</span>
     </header>
 
     <section className="network">
@@ -571,12 +573,22 @@ export default function Page(){
           </select>
         </label>
         <label>Days since irrigation cutoff
-          <input type="number" min="0" max="30" value={irrigationCutoff}
-            onChange={event=>setIrrigationCutoff(Number(event.target.value))}/>
+          <select value={irrigationCutoff}
+            onChange={event=>setIrrigationCutoff(Number(event.target.value))}>
+            {dayOptions.map(day=><option key={day} value={day}>
+              {day===0?"0 days":day===1?"1 day":`${day} days`}
+            </option>)}
+            <option value={30}>More than 21 days</option>
+          </select>
         </label>
         <label>Days since vine removal
-          <input type="number" min="0" max="30" value={vineRemoval}
-            onChange={event=>setVineRemoval(Number(event.target.value))}/>
+          <select value={vineRemoval}
+            onChange={event=>setVineRemoval(Number(event.target.value))}>
+            {dayOptions.map(day=><option key={day} value={day}>
+              {day===0?"0 days":day===1?"1 day":`${day} days`}
+            </option>)}
+            <option value={30}>More than 21 days</option>
+          </select>
         </label>
         <label>Expected harvest handling
           <select value={handling}

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 
 type RiskClass = "Low" | "Medium" | "High";
 type SoilMoisture = "Wet" | "Adequate" | "Slightly dry" | "Dry";
-type SoilTexture = "Sandy" | "Sandy loam" | "Silt loam" | "Other";
+type SoilTexture = "Sand" | "Loamy sand" | "Sandy loam" | "Loam" | "Silt loam" | "Clay loam" | "Clay" | "Organic/Peat" | "Other";
 type Handling = "Gentle" | "Typical" | "Aggressive";
 type WeatherRow = { date:string; tmaxF?:number; tminF?:number; prcpIn?:number };
 type ForecastPeriod = {
@@ -40,6 +40,7 @@ const varieties = [
   "Bellevue",
   "Murasaki",
   "Orleans",
+  "Vermillion",
   "Other"
 ];
 
@@ -109,6 +110,9 @@ export default function Page(){
   const [sampleId,setSampleId]=useState(`SKIN-${Date.now().toString().slice(-7)}`);
   const [institution,setInstitution]=useState("LSU AgCenter");
   const [fieldType,setFieldType]=useState("Research field");
+  const [productionRegion,setProductionRegion]=useState("Louisiana");
+  const [manualLocation,setManualLocation]=useState(false);
+  const [weatherSource,setWeatherSource]=useState<"NOAA"|"CIMIS">("NOAA");
   const [fieldName,setFieldName]=useState("");
   const [lat,setLat]=useState<number|null>(null);
   const [lon,setLon]=useState<number|null>(null);
@@ -126,6 +130,7 @@ export default function Page(){
   const [weatherRows,setWeatherRows]=useState<WeatherRow[]>([]);
   const [forecast,setForecast]=useState<ForecastPeriod[]>([]);
   const [station,setStation]=useState<any>(null);
+  const [weatherProviderLabel,setWeatherProviderLabel]=useState("NOAA");
   const [status,setStatus]=useState("Capture location, then load NOAA weather.");
   const [loading,setLoading]=useState(false);
 
@@ -160,7 +165,15 @@ export default function Page(){
       "Wet":100,"Adequate":75,"Slightly dry":35,"Dry":10
     });
     const textureScore=scoreState(soilTexture,{
-      "Sandy":10,"Sandy loam":40,"Silt loam":75,"Other":90
+      "Sand":10,
+      "Loamy sand":20,
+      "Sandy loam":40,
+      "Loam":55,
+      "Silt loam":75,
+      "Clay loam":85,
+      "Clay":90,
+      "Organic/Peat":65,
+      "Other":75
     });
     const nightClass=weather.meanNight===0
       ? "60–70°F"
@@ -299,44 +312,65 @@ export default function Page(){
       position=>{
         setLat(Number(position.coords.latitude.toFixed(5)));
         setLon(Number(position.coords.longitude.toFixed(5)));
-        setStatus("Current location captured. Load NOAA weather.");
+        setStatus("Field located successfully. Choose NOAA or CIMIS and load weather.");
       },
       error=>setStatus(`Location unavailable: ${error.message}`),
       {enableHighAccuracy:true,timeout:15000,maximumAge:60000}
     );
   }
 
-  async function loadNoaa(){
+  async function loadWeather(source:"NOAA"|"CIMIS"){
     if(lat===null || lon===null){
-      setStatus("Capture the field location first.");
+      setStatus("Capture the field location or enter coordinates manually first.");
       return;
     }
     setLoading(true);
-    setStatus("Loading NOAA observations and NWS forecast…");
+    setWeatherSource(source);
+    setStatus(`Loading ${source} weather data…`);
     try{
-      const historyQuery=new URLSearchParams({
-        lat:String(lat),lon:String(lon),start:plantingDate,end:samplingDate
-      });
-      const [historyResponse,forecastResponse]=await Promise.all([
-        fetch(`/api/noaa/history?${historyQuery}`),
-        fetch(`/api/noaa/forecast?lat=${lat}&lon=${lon}`)
-      ]);
-      const history=await historyResponse.json();
-      const forecastData=await forecastResponse.json();
-      if(!historyResponse.ok){
-        throw new Error(history.error || "NOAA historical weather request failed.");
+      if(source==="CIMIS"){
+        const query=new URLSearchParams({
+          lat:String(lat),
+          lon:String(lon),
+          start:plantingDate,
+          end:samplingDate,
+          station:"206"
+        });
+        const response=await fetch(`/api/cimis/history?${query}`);
+        const data=await response.json();
+        if(!response.ok){
+          throw new Error(data.error || "CIMIS weather request failed.");
+        }
+        setWeatherRows(data.rows || []);
+        setStation(data.station);
+        setWeatherProviderLabel("CIMIS");
+        setStatus(`Loaded ${data.rows?.length || 0} daily records from ${data.station?.name || "CIMIS Denair II"}.`);
+      }else{
+        const historyQuery=new URLSearchParams({
+          lat:String(lat),lon:String(lon),start:plantingDate,end:samplingDate
+        });
+        const [historyResponse,forecastResponse]=await Promise.all([
+          fetch(`/api/noaa/history?${historyQuery}`),
+          fetch(`/api/noaa/forecast?lat=${lat}&lon=${lon}`)
+        ]);
+        const history=await historyResponse.json();
+        const forecastData=await forecastResponse.json();
+        if(!historyResponse.ok){
+          throw new Error(history.error || "NOAA historical weather request failed.");
+        }
+        setWeatherRows(history.rows || []);
+        setStation(history.station);
+        setWeatherProviderLabel("NOAA");
+        if(forecastResponse.ok){
+          setForecast(forecastData.periods || []);
+        }
+        setStatus(
+          `Loaded ${history.rows?.length || 0} daily records from `+
+          `${history.station?.name || "the selected NOAA station"}.`
+        );
       }
-      setWeatherRows(history.rows || []);
-      setStation(history.station);
-      if(forecastResponse.ok){
-        setForecast(forecastData.periods || []);
-      }
-      setStatus(
-        `Loaded ${history.rows?.length || 0} daily records from `+
-        `${history.station?.name || "the selected NOAA station"}.`
-      );
     }catch(error){
-      setStatus(error instanceof Error?error.message:"NOAA load failed.");
+      setStatus(error instanceof Error?error.message:`${source} load failed.`);
     }finally{
       setLoading(false);
     }
@@ -366,6 +400,7 @@ export default function Page(){
           Created_Timestamp:new Date().toISOString(),
           Collaborating_Institution:institution,
           Field_Type:fieldType,
+          Production_Region:productionRegion,
           Field_Name:fieldName,
           Latitude:lat??"",
           Longitude:lon??"",
@@ -385,8 +420,11 @@ export default function Page(){
           Sample_ID:sampleId,
           Prediction_Timestamp:new Date().toISOString(),
           Model_Version:"v2.2-composite",
-          NOAA_Station_ID:station?.id||"",
+          Weather_Source:weatherProviderLabel,
+          NOAA_Station_ID:weatherProviderLabel==="NOAA"?(station?.id||""):"",
           NOAA_Station_Name:station?.name||"",
+          CIMIS_Station_ID:weatherProviderLabel==="CIMIS"?(station?.id||"206"):"",
+          CIMIS_Station_Name:weatherProviderLabel==="CIMIS"?(station?.name||"Denair II"):"",
           NOAA_Station_Distance_km:station?.distanceKm||"",
           Cumulative_GDD_Base60F:gdd,
           Cumulative_Rain_in:weather.rainfall,
@@ -496,7 +534,7 @@ export default function Page(){
           assessment, and collaborative model validation.
         </p>
       </div>
-      <span className="badge">VERSION 2.2 • MOBILE INPUT FIX</span>
+      <span className="badge">VERSION 2.3 • MULTI-REGION BETA</span>
     </header>
 
     <section className="network">
@@ -529,6 +567,14 @@ export default function Page(){
             <option>Grower field</option>
           </select>
         </label>
+        <label>Production region
+          <select value={productionRegion} onChange={event=>setProductionRegion(event.target.value)}>
+            <option>Louisiana</option>
+            <option>Mississippi</option>
+            <option>California</option>
+            <option>Other</option>
+          </select>
+        </label>
         <label>Field name
           <input value={fieldName} onChange={event=>setFieldName(event.target.value)}
             placeholder="Optional field or farm name"/>
@@ -552,17 +598,33 @@ export default function Page(){
         <label>Soil texture
           <select value={soilTexture}
             onChange={event=>setSoilTexture(event.target.value as SoilTexture)}>
-            <option>Sandy</option><option>Sandy loam</option>
-            <option>Silt loam</option><option>Other</option>
+            <option>Sand</option><option>Loamy sand</option>
+            <option>Sandy loam</option><option>Loam</option>
+            <option>Silt loam</option><option>Clay loam</option>
+            <option>Clay</option><option>Organic/Peat</option><option>Other</option>
           </select>
         </label>
       </div>
 
       <div className="location-bar">
-        <button onClick={useCurrentLocation}>📍 Use Current Location</button>
-        <span>{lat===null?"Location not captured":`${lat}, ${lon}`}</span>
+        <button onClick={useCurrentLocation}>📍 Locate Field</button>
+        <button className="manual-button" onClick={()=>setManualLocation(!manualLocation)}>
+          {manualLocation?"Hide Manual Entry":"Enter Coordinates Manually"}
+        </button>
+        <span>{lat===null?"Location not captured":`✓ ${lat}, ${lon}`}</span>
         <span>{dap} DAP</span>
       </div>
+
+      {manualLocation && <div className="manual-location-grid">
+        <label>Latitude
+          <input type="number" step="0.00001" value={lat??""}
+            onChange={event=>setLat(event.target.value===""?null:Number(event.target.value))}/>
+        </label>
+        <label>Longitude
+          <input type="number" step="0.00001" value={lon??""}
+            onChange={event=>setLon(event.target.value===""?null:Number(event.target.value))}/>
+        </label>
+      </div>}
 
       <div className="grid four">
         <label>Soil moisture
@@ -598,13 +660,22 @@ export default function Page(){
         </label>
       </div>
 
-      <div className="actions">
-        <button onClick={loadNoaa} disabled={loading}>
-          {loading?"Loading NOAA…":"Load NOAA weather"}
-        </button>
-        <button className="secondary" onClick={saveSampleAndPrediction}>
-          Save Prediction
-        </button>
+      <div className="environmental-data">
+        <div>
+          <h3>Environmental Data</h3>
+          <p>Use NOAA nationally or CIMIS for California fields.</p>
+        </div>
+        <div className="actions">
+          <button onClick={()=>loadWeather("NOAA")} disabled={loading}>
+            {loading&&weatherSource==="NOAA"?"Loading NOAA…":"Load NOAA Weather"}
+          </button>
+          <button className="cimis-button" onClick={()=>loadWeather("CIMIS")} disabled={loading}>
+            {loading&&weatherSource==="CIMIS"?"Loading CIMIS…":"Load CIMIS (Denair II)"}
+          </button>
+          <button className="secondary" onClick={saveSampleAndPrediction}>
+            Save Prediction
+          </button>
+        </div>
       </div>
       <p className="status">{status}</p>
     </section>
@@ -615,7 +686,8 @@ export default function Page(){
       <div><span>Rain, 7 days</span><strong>{weather.rain7.toFixed(2)} in</strong></div>
       <div><span>Mean night temp</span><strong>{weather.meanNight||"—"}°F</strong></div>
       <div><span>NWS rain probability</span><strong>{maxForecastPop}%</strong></div>
-      <div><span>NOAA station</span><strong>{station?.name||"Not loaded"}</strong></div>
+      <div><span>Weather source</span><strong>{weatherProviderLabel}</strong></div>
+      <div><span>Weather station</span><strong>{station?.name||"Not loaded"}</strong></div>
     </section>
 
     <section className="two-column">
